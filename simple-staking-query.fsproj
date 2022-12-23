@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net6.0</TargetFramework>
+    <RootNamespace>simple_staking_query</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="TestBase.fs" />
+    <Compile Include="VaraToken/ContractDefinition/VaraTokenDefinition.fs" />
+    <Compile Include="VaraToken/VaraTokenService.fs" />
+    <Compile Include="SimpleStaking/ContractDefinition/SimpleStakingDefinition.fs" />
+    <Compile Include="SimpleStaking/SimpleStakingService.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Data" Version="5.0.2" />
+    <PackageReference Include="Nethereum.Web3" Version="4.12.0" />
+  </ItemGroup>
+</Project>
