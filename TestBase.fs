@@ -12,7 +12,6 @@ open Newtonsoft.Json
 open Newtonsoft.Json.Linq
 open Nethereum.Contracts
 open Nethereum.Hex.HexConvertors.Extensions
-open System.Text
 open System.Threading.Tasks
 open Nethereum.Web3.Accounts
 
@@ -68,6 +67,9 @@ type EthereumConnection(nodeURI: string, privKey: string) =
                     this.GasPrice, 
                     HexBigInteger(value))
             this.Web3.Eth.TransactionManager.SendTransactionAndWaitForReceiptAsync(input)
+
+    member this.SendTxAsync toAddress value data = 
+        (this :> IAsyncTxSender).SendTxAsync toAddress value data
 
     member this.DeployContractAsync (abi: Abi) (arguments: obj array) =
         this.Web3.Eth.DeployContract.SendRequestAndWaitForReceiptAsync(
@@ -180,3 +182,19 @@ let makeAccount() =
     let ecKey = Nethereum.Signer.EthECKey.GenerateKey();
     let privateKey = ecKey.GetPrivateKeyAsBytes().ToHex();
     Account(privateKey);
+
+let sendTx (url:string) gasPrice maxGas (privKey:String) toAddress value data =
+    let account = Account(privKey)
+    let web3 = Web3(account, url)
+    let input: TransactionInput =
+        TransactionInput(
+            data, 
+            toAddress, 
+            account.Address, 
+            hexBigInt maxGas, 
+            hexBigInt gasPrice, 
+            hexBigInt value)
+    web3.Eth.TransactionManager.SendTransactionAndWaitForReceiptAsync(input) |> runNow
+
+let sendTxAs = 
+    sendTx localURI 4000000UL 1000000000UL

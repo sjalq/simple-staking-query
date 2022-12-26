@@ -3,13 +3,56 @@ open SimpleStaking.Contracts.VaraToken
 open SimpleStaking.Contracts.VaraToken.ContractDefinition
 open SimpleStaking.Contracts.SimpleStaking
 open SimpleStaking.Contracts.SimpleStaking.ContractDefinition
-open System.Threading.Tasks
 open TestBase
 open System.Linq
+open System.Numerics
 
-printfn "Hello from F#"
+type Actions =
+    | Stake of BigInteger
+    | Unstake
 
-let useContractAtRandon = 
+let pickRandomAction () = 
+    let action = rnd.Next(0, 10) % 2
+    match action with
+    | 0 -> 
+        let amount = 
+            rnd.Next(0, 1_000) 
+            |> BigInteger 
+            |> (*) (BigInteger 1_000_000_000_000_000_000UL)
+        Stake amount
+    | 1 -> Unstake
+    | _ -> failwith "should not happen"
+
+
+let takeRandomActionAsRandomAccount accounts varaTokenAddress simpleStakingAddress =
+    let account = pickRandom accounts
+    let varaTokenService = VaraTokenService(Web3(account, "http://localhost:8545"), varaTokenAddress)
+    let simpleStakingService = SimpleStakingService(Web3(account, "http://localhost:8545"), simpleStakingAddress)
+
+    let stake amount = 
+        let approveTxr = 
+            varaTokenService.ApproveRequestAndWaitForReceiptAsync(
+                ApproveFunction(Spender = simpleStakingService.ContractHandler.ContractAddress, Amount = amount)
+            ) |> runNow
+        let stakeTxr = 
+            simpleStakingService.StakeRequestAndWaitForReceiptAsync(
+                StakeFunction(Amount = amount)
+            ) |> runNow
+        ()
+
+    let unstake =
+        let unstakeTxr = 
+            simpleStakingService.UnstakeRequestAndWaitForReceiptAsync(
+                UnstakeFunction()
+            ) |> runNow
+        ()
+
+    match pickRandomAction() with
+    | Stake amount -> stake amount
+    | Unstake -> unstake
+
+
+let useContractAtRandom = 
     // logic:
     // * deploy the VARA token
     // * deploy the SimpleStaking contract, pointing at the VARA token
@@ -31,7 +74,8 @@ let useContractAtRandon =
     let varaTokenService = 
         VaraTokenService.DeployContractAndGetServiceAsync(ethConn.Web3, varaTokenDeployment) 
         |> Async.RunSynchronously 
-    let simpleStakingDeployment = SimpleStakingDeployment(varaTokenService.ContractHandler.ContractAddress)
+    let simpleStakingDeployment = SimpleStakingDeployment()
+    simpleStakingDeployment.Vara <- varaTokenService.ContractHandler.ContractAddress
     let simpleStakingService = 
         SimpleStakingService.DeployContractAndGetServiceAsync(ethConn.Web3, simpleStakingDeployment) 
         |> Async.RunSynchronously
@@ -44,41 +88,35 @@ let useContractAtRandon =
         |> Seq.toList
 
     // give all the accounts some Eth and some VARA
-    randomAccounts
-    |> List.map (fun acc -> 
-        ethConn.SendEther acc.Address (bigInt 1000000000000000000UL)
-        |> ignore
+    Console.info "Initializing accounts with Eth and VARA"
+    let initTxrs = 
+        randomAccounts
+        |> List.map (fun acc -> 
+            let ethTxr = ethConn.SendEther acc.Address (bigInt 1000000000000000000UL)
 
-        ethConn.SendTxAsync(
-            varaTokenService.ContractHandler.ContractAddress, 
-            bigInt 1000000000000000000UL, 
-            varaTokenService.ContractHandler.GetFunction("mint").CreateTransactionInput(acc.Address, bigInt 1000000000000000000UL))
+            let varaTxr = 
+                varaTokenService
+                    .TransferRequestAndWaitForReceiptAsync(
+                        TransferFunction(
+                            To = acc.Address,
+                            Amount = bigInt 300_000_000_000_000_000UL))
+                |> runNow
+                
+            ethTxr, varaTxr)
+    
+    let balances = 
+        randomAccounts
+        |> List.map (fun acc -> 
+            let ethBalance = ethConn.Web3.Eth.GetBalance.SendRequestAsync(acc.Address) |> runNow
+            let varaBalanceOfFunction = BalanceOfFunction(Account = acc.Address)
+            let varaBalance = varaTokenService.BalanceOfQueryAsync(varaBalanceOfFunction) |> runNow
+            ethBalance, varaBalance)
 
-
-        ethConn.Web3.Eth
-            .GetEtherTransferService()
-            .TransferEtherAndWaitForReceiptAsync(
-                acc.Address, 
-                gas = ethConn.Gas, 
-                gasPriceGwei = ethConn.GasPrice, 
-                etherAmount = bigInt 1000000000000000000UL) 
-        |> runNow
-        |> ignore
-
-        varaTokenService
-            .TransferRequestAsync(
-                 TransferFunction(
-                    To = "0x123456",
-                    Amount = 1234567890I))
-        |> runNow
-        |> ignore)
+    Enumerable.Repeat((),10000)
+    |> Seq.map (fun _ -> 
+        takeRandomActionAsRandomAccount 
+            randomAccounts 
+            varaTokenService.ContractHandler.ContractAddress 
+            simpleStakingService.ContractHandler.ContractAddress)
+    |> Seq.toList
     |> ignore
-
-    while true do
-        let acc = pickRandom randomAccounts
-        let stakingOrUnStaking = (rnd.Next(0, 1) = 0)
-        if stakingOrUnStaking then
-
-
-
-    1
