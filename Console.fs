@@ -1,6 +1,7 @@
 module Console
 
 open System
+open System.Reflection
 
 let log =
     let lockObj = obj()
@@ -15,3 +16,7 @@ let ok = log ConsoleColor.Green
 let info = log ConsoleColor.Cyan
 let warn = log ConsoleColor.Yellow
 let error = log ConsoleColor.Red
+let debug x = 
+    x |> sprintf "%A" |> log ConsoleColor.Gray
+    x
+
