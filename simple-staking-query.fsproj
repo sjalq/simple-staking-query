@@ -5,6 +5,7 @@
     <RootNamespace>simple_staking_query</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="JsonUtility.fs" />
     <Compile Include="Console.fs" />
     <Compile Include="TestBase.fs" />
     <Compile Include="VaraToken/ContractDefinition/VaraTokenDefinition.fs" />

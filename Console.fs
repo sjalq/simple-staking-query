@@ -19,4 +19,3 @@ let error = log ConsoleColor.Red
 let debug x = 
     x |> sprintf "%A" |> log ConsoleColor.Gray
     x
-

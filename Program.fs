@@ -143,7 +143,7 @@ Thread(fun () ->
 
 
 let useContractAtRandom = 
-    let x = rnd.Next(1, 10)
+    let x = rnd.Next(1, 100)
     let randomAccounts = initRandomAccounts x
     let (varaTokenService, simpleStakingService) = deployContracts()
     giftVaraToAccounts randomAccounts varaTokenService |> ignore
@@ -169,23 +169,25 @@ let useContractAtRandom =
 
     timer.Dispose() 
 
-    let simpleStakingContract  = ethConn.Web3.Eth.GetContract(ABI, simpleStakingService.ContractHandler.ContractAddress) |> Console.debug
-    let stakedEventLog = simpleStakingContract.GetEvent("Staked") |> Console.debug 
-    let filterInput = stakedEventLog.CreateFilterInput(BlockParameter(1UL), BlockParameter.CreateLatest()) |> Console.debug
-    let logs = stakedEventLog.GetAllChangesAsync<StakedEventDTO>(filterInput) |> runNow |> Seq.toList |> Console.debug
-    logs  
-    |> List.map (fun log -> log.Event |> toJson) 
+    getEvents<StakedEventDTO> 
+        "Staked"
+        ABI
+        simpleStakingService.ContractHandler.ContractAddress
+        (BlockParameter(0UL))
+        (BlockParameter.CreateLatest()) 
+    |> Seq.toList
+    |> List.map JsonUtility.toJson
     |> Console.debug
+    |> ignore
 
-let getEvents<'T when 'T: (new: unit -> 'T)> 
-        eventName 
-        abi 
-        contractAddress 
-        fromBlockParam 
-        toBlockParam =
-    let contract = ethConn.Web3.Eth.GetContract(abi, contractAddress)
-    let stakedEventLog = contract.GetEvent(eventName)
-    let filterInput = stakedEventLog.CreateFilterInput(fromBlockParam, toBlockParam)
-    stakedEventLog.GetAllChangesAsync<'T>(filterInput) 
-    |> runNow
-    |> Seq.map (fun log -> log.Event)
+    getEvents<UnstakedEventDTO>
+        "Unstaked"
+        ABI
+        simpleStakingService.ContractHandler.ContractAddress
+        (BlockParameter(0UL))
+        (BlockParameter.CreateLatest())
+    |> Seq.toList
+    |> List.filter (fun e -> e.Amount > (BigInteger(0UL)))
+    |> List.map JsonUtility.toJson
+    |> Console.debug
+    |> ignore

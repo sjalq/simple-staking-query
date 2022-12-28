@@ -197,12 +197,20 @@ let sendTx (url:string) gasPrice maxGas (privKey:String) toAddress value data =
             hexBigInt value)
     web3.Eth.TransactionManager.SendTransactionAndWaitForReceiptAsync(input) |> runNow
 
+
 let sendTxAs = 
     sendTx localURI 4000000UL 1000000000UL
 
-let toJson obj =
-    let t = obj.GetType()
-    let props = t.GetProperties(BindingFlags.Instance ||| BindingFlags.Public)
-                 |> Array.map (fun p -> p.Name, p.GetValue(obj))
-                 |> dict
-    Newtonsoft.Json.JsonConvert.SerializeObject(props, Newtonsoft.Json.Formatting.Indented)
+
+let getEvents<'T when 'T: (new: unit -> 'T)> 
+        eventName 
+        abi 
+        contractAddress 
+        fromBlockParam 
+        toBlockParam =
+    let contract = ethConn.Web3.Eth.GetContract(abi, contractAddress)
+    let stakedEventLog = contract.GetEvent(eventName)
+    let filterInput = stakedEventLog.CreateFilterInput(fromBlockParam, toBlockParam)
+    stakedEventLog.GetAllChangesAsync<'T>(filterInput) 
+    |> runNow
+    |> Seq.map (fun log -> log.Event)
