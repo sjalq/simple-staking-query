@@ -6,26 +6,31 @@ open SimpleStaking.Contracts.SimpleStaking.ContractDefinition
 open TestBase
 open System.Linq
 open System.Numerics
+open System.Threading
+open System
+open Nethereum.Web3.Accounts
+open Nethereum.RPC.Eth.DTOs
+
 
 type Actions =
     | Stake of BigInteger
     | Unstake
+
 
 let pickRandomAction () = 
     let action = rnd.Next(0, 10) % 2
     match action with
     | 0 -> 
         let amount = 
-            rnd.Next(0, 1_000) 
+            rnd.Next(0, 1_000_000) 
             |> BigInteger 
-            |> (*) (BigInteger 1_000_000_000_000_000_000UL)
+            |> (*) (BigInteger 1_000_000_000_000_000UL)
         Stake amount
     | 1 -> Unstake
     | _ -> failwith "should not happen"
 
 
-let takeRandomActionAsRandomAccount accounts varaTokenAddress simpleStakingAddress =
-    let account = pickRandom accounts
+let takeRandomActionAsRandomAccount varaTokenAddress simpleStakingAddress account =
     let varaTokenService = VaraTokenService(Web3(account, "http://localhost:8545"), varaTokenAddress)
     let simpleStakingService = SimpleStakingService(Web3(account, "http://localhost:8545"), simpleStakingAddress)
 
@@ -34,89 +39,153 @@ let takeRandomActionAsRandomAccount accounts varaTokenAddress simpleStakingAddre
             varaTokenService.ApproveRequestAndWaitForReceiptAsync(
                 ApproveFunction(Spender = simpleStakingService.ContractHandler.ContractAddress, Amount = amount)
             ) |> runNow
-        let stakeTxr = 
+        
+        try 
             simpleStakingService.StakeRequestAndWaitForReceiptAsync(
                 StakeFunction(Amount = amount)
-            ) |> runNow
-        ()
+            ) |> runNow 
+            |> Ok
+        with
+        | ex -> Error ex
 
     let unstake =
-        let unstakeTxr = 
+        try 
             simpleStakingService.UnstakeRequestAndWaitForReceiptAsync(
                 UnstakeFunction()
             ) |> runNow
-        ()
+            |> Ok
+        with
+        | ex -> Error ex
 
-    match pickRandomAction() with
-    | Stake amount -> stake amount
-    | Unstake -> unstake
+    // wait some seconds between actions (allows "days" of blocktime to pass)
+    System.Threading.Thread.Sleep(rnd.Next(1,120))
+    let action = pickRandomAction()
+    let result = 
+        match action with
+        | Stake amount -> stake amount
+        | Unstake -> unstake
+    
+    match result with
+    | Ok txr -> 
+        sprintf "Account: %s Action: %s Tx: %s" account.Address (action.ToString()) txr.TransactionHash
+        |> Console.info
+        |> ignore
+    | Error ex ->
+        sprintf "Account: %s Action: %s Error: %s" account.Address (action.ToString()) ex.Message
+        |> ignore
+
+let ABI = """[{"inputs":[{"internalType":"contract IERC20","name":"_vara","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"_staker","type":"address"},{"indexed":false,"internalType":"uint256","name":"_amount","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"_duration","type":"uint256"},{"indexed":true,"internalType":"uint256","name":"_releaseDate","type":"uint256"}],"name":"Staked","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"_staker","type":"address"},{"indexed":false,"internalType":"uint256","name":"_amount","type":"uint256"},{"indexed":true,"internalType":"uint256","name":"_originalReleaseDate","type":"uint256"},{"indexed":true,"internalType":"uint256","name":"_releaseDate","type":"uint256"}],"name":"Unstaked","type":"event"},{"inputs":[{"internalType":"uint256","name":"_amount","type":"uint256"}],"name":"Stake","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"Unstake","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"}],"name":"releaseDates","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"}],"name":"stakedFunds","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"vara","outputs":[{"internalType":"contract IERC20","name":"","type":"address"}],"stateMutability":"view","type":"function"}]"""
+
+let initRandomAccounts x = 
+    sprintf "Spinning up %d random accounts" x |> Console.info
+    let randomAccounts = 
+        Enumerable.Range(1, x) 
+        |> Seq.map (fun _ -> makeAccount()) 
+        |> Seq.toArray
+
+    "Giving all accounts some Eth" |> Console.info
+    randomAccounts
+    |> Array.map (fun acc -> 
+        let ethTxr = ethConn.SendEther acc.Address (bigInt 1_000_000_000_000_000_000UL)
+        sprintf "Account: %s Eth: 1" acc.Address 
+        |> Console.info)
+    |> ignore
+
+    randomAccounts
 
 
-let useContractAtRandom = 
-    // logic:
-    // * deploy the VARA token
-    // * deploy the SimpleStaking contract, pointing at the VARA token
-    // * spin up x number of random accounts with some Eth and some VARA
-    // * give all the accounts some Eth and some VARA
-    // * loop 
-    //      * randomly pick an account
-    //      * give it some Eth
-    //      * give it some VARA
-    //      * randomly decide to stake or to unstake
-    //          * if staking, randomly pick an amount to stake
-    //          * if unstaking, simply unstake
-    //      * wait for the transaction to complete
-    //      * display the balances of all the account and the staking contract
-    //      * repeat
-
+let deployContracts () = 
     // deploy contracts
+    Console.info "Deploying contracts"
     let varaTokenDeployment = VaraTokenDeployment()
     let varaTokenService = 
         VaraTokenService.DeployContractAndGetServiceAsync(ethConn.Web3, varaTokenDeployment) 
         |> Async.RunSynchronously 
-    let simpleStakingDeployment = SimpleStakingDeployment()
-    simpleStakingDeployment.Vara <- varaTokenService.ContractHandler.ContractAddress
+    let simpleStakingDeployment = SimpleStakingDeployment(Vara = varaTokenService.ContractHandler.ContractAddress)
     let simpleStakingService = 
         SimpleStakingService.DeployContractAndGetServiceAsync(ethConn.Web3, simpleStakingDeployment) 
         |> Async.RunSynchronously
+    (varaTokenService, simpleStakingService)
 
-    // spin up x number of random accounts with some Eth and some VARA
-    let x = rnd.Next(1, 100)
-    let randomAccounts = 
-        Enumerable.Range(1, x) 
-        |> Seq.map (fun _ -> makeAccount()) 
-        |> Seq.toList
 
-    // give all the accounts some Eth and some VARA
-    Console.info "Initializing accounts with Eth and VARA"
-    let initTxrs = 
+let giftVaraToAccounts (accounts: Account array) (varaTokenService:VaraTokenService) =
+    Console.info "Initializing accounts with VARA"
+    accounts
+    |> Array.map (fun acc -> 
+        let rndVaraBalance = 
+            rnd.Next(0, 1_000_000) 
+            |> BigInteger 
+            |> (*) (BigInteger 1_000_000_000_000_000UL)
+            
+        let varaTxr = 
+            varaTokenService
+                .TransferRequestAndWaitForReceiptAsync(
+                    TransferFunction(
+                        To = acc.Address,
+                        Amount = rndVaraBalance))
+            |> runNow
+        sprintf "Account: %s, VARA:\t %A" acc.Address rndVaraBalance |> Console.info
+        varaTxr)
+
+
+let advanceTime interval fn =
+    ethConn.TimeTravel (1UL * days)
+    let timer = new Timer(TimerCallback fn)
+    timer.Change(0, interval) |> ignore
+    timer
+
+
+let mutable escapeKeyPressed = false
+Thread(fun () -> 
+    while not escapeKeyPressed do
+        escapeKeyPressed <- Console.ReadKey(false).Key = ConsoleKey.Escape)
+    .Start()
+
+
+let useContractAtRandom = 
+    let x = rnd.Next(1, 10)
+    let randomAccounts = initRandomAccounts x
+    let (varaTokenService, simpleStakingService) = deployContracts()
+    giftVaraToAccounts randomAccounts varaTokenService |> ignore
+
+    // travel forward in time 1 day every second, which allows unstaking to actually happen
+    let timer = advanceTime 1000 (fun _ -> 
+                                    // get the vara balance of the staking contract and display it
+                                    let stakingContractBalance = 
+                                        varaTokenService.BalanceOfQueryAsync(BalanceOfFunction(Account = simpleStakingService.ContractHandler.ContractAddress)) 
+                                        |> runNow
+                                    sprintf "Staking contract balance: %A" ((stakingContractBalance / (BigInteger 1_000_000_000_000_000UL))) |> Console.ok
+                                )
+
+    while not escapeKeyPressed do
         randomAccounts
-        |> List.map (fun acc -> 
-            let ethTxr = ethConn.SendEther acc.Address (bigInt 1000000000000000000UL)
+        |> Array.Parallel.map (fun acc ->
+            Thread.Sleep(rnd.Next(0, 30)) // wait between 0 and 30 seconds between actions
+            acc
+            |> takeRandomActionAsRandomAccount  
+                varaTokenService.ContractHandler.ContractAddress 
+                simpleStakingService.ContractHandler.ContractAddress)
+        |> ignore
 
-            let varaTxr = 
-                varaTokenService
-                    .TransferRequestAndWaitForReceiptAsync(
-                        TransferFunction(
-                            To = acc.Address,
-                            Amount = bigInt 300_000_000_000_000_000UL))
-                |> runNow
-                
-            ethTxr, varaTxr)
-    
-    let balances = 
-        randomAccounts
-        |> List.map (fun acc -> 
-            let ethBalance = ethConn.Web3.Eth.GetBalance.SendRequestAsync(acc.Address) |> runNow
-            let varaBalanceOfFunction = BalanceOfFunction(Account = acc.Address)
-            let varaBalance = varaTokenService.BalanceOfQueryAsync(varaBalanceOfFunction) |> runNow
-            ethBalance, varaBalance)
+    timer.Dispose() 
 
-    Enumerable.Repeat((),10000)
-    |> Seq.map (fun _ -> 
-        takeRandomActionAsRandomAccount 
-            randomAccounts 
-            varaTokenService.ContractHandler.ContractAddress 
-            simpleStakingService.ContractHandler.ContractAddress)
-    |> Seq.toList
-    |> ignore
+    let simpleStakingContract  = ethConn.Web3.Eth.GetContract(ABI, simpleStakingService.ContractHandler.ContractAddress) |> Console.debug
+    let stakedEventLog = simpleStakingContract.GetEvent("Staked") |> Console.debug 
+    let filterInput = stakedEventLog.CreateFilterInput(BlockParameter(1UL), BlockParameter.CreateLatest()) |> Console.debug
+    let logs = stakedEventLog.GetAllChangesAsync<StakedEventDTO>(filterInput) |> runNow |> Seq.toList |> Console.debug
+    logs  
+    |> List.map (fun log -> log.Event |> toJson) 
+    |> Console.debug
+
+let getEvents<'T when 'T: (new: unit -> 'T)> 
+        eventName 
+        abi 
+        contractAddress 
+        fromBlockParam 
+        toBlockParam =
+    let contract = ethConn.Web3.Eth.GetContract(abi, contractAddress)
+    let stakedEventLog = contract.GetEvent(eventName)
+    let filterInput = stakedEventLog.CreateFilterInput(fromBlockParam, toBlockParam)
+    stakedEventLog.GetAllChangesAsync<'T>(filterInput) 
+    |> runNow
+    |> Seq.map (fun log -> log.Event)

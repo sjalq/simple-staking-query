@@ -14,6 +14,7 @@ open Nethereum.Contracts
 open Nethereum.Hex.HexConvertors.Extensions
 open System.Threading.Tasks
 open Nethereum.Web3.Accounts
+open System.Reflection
 
 type EthAddress(rawString: string) =
     static member Zero = "0x0000000000000000000000000000000000000000"
@@ -161,7 +162,7 @@ let useRinkeby = false
 let localURI = "http://localhost:8545"
 let rinkebyURI = "https://rinkeby.infura.io/v3/c48bc466281c4fefb3decad63c4fc815"
 let ganacheMnemonic = "join topple vapor pepper sell enter isolate pact syrup shoulder route token"
-let ganachePrivKey = "689eb5e83bdc2ede1bb2d73b44c5315da21e2ce31e7507cd7fbb94caefd180b4"
+let ganachePrivKey = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 let rinkebyPrivKey = "5ca35a65adbd49af639a3686d7d438dba1bcef97cf1593cd5dd8fd79ca89fa3c"
 
 let isRinkeby rinkeby notRinkeby =
@@ -198,3 +199,10 @@ let sendTx (url:string) gasPrice maxGas (privKey:String) toAddress value data =
 
 let sendTxAs = 
     sendTx localURI 4000000UL 1000000000UL
+
+let toJson obj =
+    let t = obj.GetType()
+    let props = t.GetProperties(BindingFlags.Instance ||| BindingFlags.Public)
+                 |> Array.map (fun p -> p.Name, p.GetValue(obj))
+                 |> dict
+    Newtonsoft.Json.JsonConvert.SerializeObject(props, Newtonsoft.Json.Formatting.Indented)
