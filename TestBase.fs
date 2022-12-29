@@ -2,7 +2,6 @@ module TestBase
 
 open Nethereum.Web3
 open Microsoft.FSharp.Control
-open FSharp.Data
 open System
 open Nethereum.RPC.Eth.DTOs
 open System.Numerics
@@ -14,7 +13,6 @@ open Nethereum.Contracts
 open Nethereum.Hex.HexConvertors.Extensions
 open System.Threading.Tasks
 open Nethereum.Web3.Accounts
-open System.Reflection
 
 type EthAddress(rawString: string) =
     static member Zero = "0x0000000000000000000000000000000000000000"

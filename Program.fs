@@ -10,11 +10,22 @@ open System.Threading
 open System
 open Nethereum.Web3.Accounts
 open Nethereum.RPC.Eth.DTOs
-
+open Query
+open System.CommandLine
+open System.Threading.Tasks
+open Argu
+open Arguments
 
 type Actions =
     | Stake of BigInteger
     | Unstake
+
+
+type DividendEvent = 
+    { 
+        Timestamp : BigInteger
+        Amount : BigInteger
+    }
 
 
 let pickRandomAction () = 
@@ -142,7 +153,7 @@ Thread(fun () ->
     .Start()
 
 
-let useContractAtRandom = 
+let useContractAtRandom () = 
     let x = rnd.Next(1, 100)
     let randomAccounts = initRandomAccounts x
     let (varaTokenService, simpleStakingService) = deployContracts()
@@ -191,3 +202,95 @@ let useContractAtRandom =
     |> List.map JsonUtility.toJson
     |> Console.debug
     |> ignore
+
+
+let queryFromEvents 
+        timestamp 
+        (stakingEvents:StakedEventDTO list) 
+        (unstakingEvents:UnstakedEventDTO list) 
+        dividendEvents =
+    let initModel = Query.initModel timestamp
+    let stakingMsg = 
+        stakingEvents
+        |> List.map (fun se -> (se.ReleaseDate - se.Duration), Query.Msg.Stake (se.Staker, se.Amount))
+        |> List.sortBy fst
+    let unstakingMsg = 
+        unstakingEvents
+        |> List.map (fun ue -> ue.ReleaseDate, Query.Msg.Unstake ue.Staker)
+        |> List.sortBy fst
+    let dividendMsg =
+        dividendEvents
+        |> List.map (fun de -> de.Timestamp, Query.Msg.MerkleDropReward de.Amount)
+        |> List.sortBy fst
+    let allMsg = 
+        stakingMsg @ unstakingMsg @ dividendMsg 
+        |> List.sortBy fst 
+        |> List.map snd
+    allMsg 
+    |> List.fold 
+        (fun ((model,cmd), payments) msg -> 
+            match cmd with
+            | Query.Cmd.Payouts p -> 
+                Query.update msg model, payments @ [p]
+            | _ -> 
+                Query.update msg model, payments)
+        ((initModel, Query.Cmd.Nope), List.empty)
+
+
+let fetchEventsAndSimulateDividends
+        stakingContractAddress 
+        contractLaunchTimestamp
+        dividendEvents =
+    let stakingEvents = 
+        getEvents<StakedEventDTO> 
+            "Staked"
+            ABI
+            stakingContractAddress
+            (BlockParameter(0UL))
+            (BlockParameter.CreateLatest()) 
+        |> Seq.toList
+    let unstakingEvents =
+        getEvents<UnstakedEventDTO>
+            "Unstaked"
+            ABI
+            stakingContractAddress
+            (BlockParameter(0UL))
+            (BlockParameter.CreateLatest())
+        |> Seq.toList
+    queryFromEvents 
+        contractLaunchTimestamp 
+        stakingEvents 
+        unstakingEvents
+        dividendEvents
+
+[<EntryPoint>]
+let main argv =
+    match argv with
+    | [|nodeUri; contractAddress; strDividends|] -> 
+        let dividendEvents = 
+            strDividends.Split(",") 
+            |> Array.toList
+            |> List.mapi (fun indx strDividend -> 
+                let strDivList = strDividend.Split(" ")
+                match strDivList with
+                | [|strTimestamp; strAmount|] -> 
+                    try 
+                        { Timestamp = UInt64.Parse strTimestamp |> BigInteger
+                          Amount = Decimal.Multiply(Decimal.Parse strAmount, 1_000_000_000_000_000_000M) |> BigInteger }
+                        |> Ok
+                    with
+                    | _ -> sprintf "Invalid timestamp or amount for dividend %d" (indx+1) |> Error
+                | _ -> sprintf "Invalid dividend event %d" (indx+1) |> Error)
+
+        let errors = dividendEvents |> List.choose (fun i -> match i with | Error x -> Some x | _ -> None)
+        match errors with
+        | [] ->
+            let dividendEvents = dividendEvents |> List.choose (function | Ok x -> Some x | _ -> None)
+            let (model, payments) =
+                fetchEventsAndSimulateDividends contractAddress BigInteger.Zero dividendEvents
+            payments |> List.iter (fun p -> sprintf "%A" p |> Console.debug |> ignore)
+        | _ ->
+            errors |> List.iter Console.error
+    | _ -> useContractAtRandom()
+
+    0
