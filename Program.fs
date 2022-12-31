@@ -56,7 +56,7 @@ let takeRandomActionAsRandomAccount varaTokenAddress simpleStakingAddress accoun
         with
         | ex -> Error ex
 
-    let unstake =
+    let unstake () =
         try 
             simpleStakingService.UnstakeRequestAndWaitForReceiptAsync(
                 UnstakeFunction()
@@ -71,15 +71,16 @@ let takeRandomActionAsRandomAccount varaTokenAddress simpleStakingAddress accoun
     let result = 
         match action with
         | Stake amount -> stake amount
-        | Unstake -> unstake
+        | Unstake -> unstake ()
     
     match result with
     | Ok txr -> 
         sprintf "Account: %s Action: %s Tx: %s" account.Address (action.ToString()) txr.TransactionHash
-        |> Console.info
+        //|> Console.info
         |> ignore
     | Error ex ->
         sprintf "Account: %s Action: %s Error: %s" account.Address (action.ToString()) ex.Message
+        |> Console.info
         |> ignore
 
 let ABI = """[{"inputs":[{"internalType":"contract IERC20","name":"_vara","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"_staker","type":"address"},{"indexed":false,"internalType":"uint256","name":"_amount","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"_duration","type":"uint256"},{"indexed":true,"internalType":"uint256","name":"_releaseDate","type":"uint256"}],"name":"Staked","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"_staker","type":"address"},{"indexed":false,"internalType":"uint256","name":"_amount","type":"uint256"},{"indexed":true,"internalType":"uint256","name":"_originalReleaseDate","type":"uint256"},{"indexed":true,"internalType":"uint256","name":"_releaseDate","type":"uint256"}],"name":"Unstaked","type":"event"},{"inputs":[{"internalType":"uint256","name":"_amount","type":"uint256"}],"name":"Stake","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"Unstake","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"}],"name":"releaseDates","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"}],"name":"stakedFunds","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"vara","outputs":[{"internalType":"contract IERC20","name":"","type":"address"}],"stateMutability":"view","type":"function"}]"""
@@ -144,17 +145,29 @@ let advanceTime interval fn =
 
 
 let mutable escapeKeyPressed = false
-Thread(fun () -> 
-    while not escapeKeyPressed do
-        escapeKeyPressed <- Console.ReadKey(false).Key = ConsoleKey.Escape)
-    .Start()
+let monitorEscapeKey () =
+    Console.info "Press ESC to stop"
+    Thread(fun () -> 
+        while not escapeKeyPressed do
+            escapeKeyPressed <- Console.ReadKey(false).Key = ConsoleKey.Escape)
+        .Start()
 
+let runFunctionInThread fn =
+    let t = Thread(fun () -> 
+        while not escapeKeyPressed do 
+            Thread.Sleep(rnd.Next(0, 120000)) 
+            fn()
+    )
+    t
 
 let useContractAtRandom () = 
-    let x = rnd.Next(1, 100)
-    let randomAccounts = initRandomAccounts x
+    let randomAccounts = initRandomAccounts 10
     let (varaTokenService, simpleStakingService) = deployContracts()
     giftVaraToAccounts randomAccounts varaTokenService |> ignore
+
+    // print the deployed contract addresses to the screen
+    sprintf "VARA Address : %A" varaTokenService.ContractHandler.ContractAddress |> Console.complete 
+    sprintf "Staking Address : %A" simpleStakingService.ContractHandler.ContractAddress |> Console.complete
 
     // travel forward in time 1 day every second, which allows unstaking to actually happen
     let timer = advanceTime 1000 (fun _ -> 
@@ -162,30 +175,35 @@ let useContractAtRandom () =
                                     let stakingContractBalance = 
                                         varaTokenService.BalanceOfQueryAsync(BalanceOfFunction(Account = simpleStakingService.ContractHandler.ContractAddress)) 
                                         |> runNow
-                                    sprintf "Staking contract balance: %A" ((stakingContractBalance / (BigInteger 1_000_000_000_000_000UL))) |> Console.ok
+                                    let time = ethConn.getLatestBlockTimestamp()
+                                    sprintf "Time: %A - \t Staking contract balance: %A" time ((stakingContractBalance / (BigInteger 1_000_000_000_000_000UL))) |> Console.ok
                                 )
 
-    while not escapeKeyPressed do
+    monitorEscapeKey()
+    let threads = 
         randomAccounts
-        |> Array.Parallel.map (fun acc ->
-            Thread.Sleep(rnd.Next(0, 30)) // wait between 0 and 30 seconds between actions
-            acc
-            |> takeRandomActionAsRandomAccount  
-                varaTokenService.ContractHandler.ContractAddress 
-                simpleStakingService.ContractHandler.ContractAddress)
-        |> ignore
+        |> Array.map (fun acc ->
+            runFunctionInThread (fun () -> 
+                acc
+                |> takeRandomActionAsRandomAccount  
+                    varaTokenService.ContractHandler.ContractAddress 
+                    simpleStakingService.ContractHandler.ContractAddress))
+    
+    threads |> Array.iter (fun t -> t.Start())
+    
+    while threads |> Array.exists(fun t -> t.IsAlive) do
+        // wait for all the threads to conclude
+        Thread.Sleep(1000)
 
     timer.Dispose() 
 
-    let plug = ContractPlug(ethConn, Abi(ABI), simpleStakingService.ContractHandler.ContractAddress)
+    let plug = ContractPlug(ethConn, abiFromAbiJson(ABI), simpleStakingService.ContractHandler.ContractAddress)
 
     plug.getEvents<StakedEventDTO> 
         "Staked"
         (BlockParameter(0UL))
         (BlockParameter.CreateLatest()) 
     |> Seq.toList
-    |> List.map JsonUtility.toJson
-    |> Console.debug
     |> ignore
 
     plug.getEvents<UnstakedEventDTO>
@@ -194,8 +212,6 @@ let useContractAtRandom () =
         (BlockParameter.CreateLatest())
     |> Seq.toList
     |> List.filter (fun e -> e.Amount > (BigInteger(0UL)))
-    |> List.map JsonUtility.toJson
-    |> Console.debug
     |> ignore
 
 
@@ -220,8 +236,9 @@ let queryFromEvents
     let allMsg = 
         stakingMsg @ unstakingMsg @ dividendMsg 
         |> List.sortBy fst 
+        |> Console.debug
         |> List.map snd
-    allMsg 
+    allMsg
     |> List.fold 
         (fun ((model,cmd), payments) msg -> 
             match cmd with
@@ -238,7 +255,7 @@ let fetchEventsAndSimulateDividends
         contractLaunchTimestamp
         dividendEvents =
     let conn = EthereumConnection(nodeUri, makeAccount().PrivateKey) 
-    let plug = ContractPlug(conn, Abi(ABI), stakingContractAddress)
+    let plug = ContractPlug(conn, abiFromAbiJson(ABI), stakingContractAddress)
     let stakingEvents = 
         plug.getEvents<StakedEventDTO> 
             "Staked"
@@ -257,10 +274,16 @@ let fetchEventsAndSimulateDividends
         unstakingEvents
         dividendEvents
 
+let usage =
+    @"Invalid arguments:
+    Use either no arguments to run a simulation against ""http://127.0.0.1:8545""
+    Or provide [nodeUri] [contractAddress] [dividendTimestamp1] [dividendAmount1] [dividendTimestamp2] [dividendAmount2] ..."
+
+
 [<EntryPoint>]
 let main argv =
     match argv |> Array.toList with
-    | nodeUri :: contractAddress :: strDividends when (List.length strDividends) % 2 = 0 -> 
+    | nodeUri :: contractAddress :: strDividends when (List.length strDividends) % 2 = 0 && (List.length strDividends) <> 0 -> 
         let dividendEvents = 
             strDividends
             |> List.chunkBySize 2
@@ -283,8 +306,11 @@ let main argv =
                 fetchEventsAndSimulateDividends nodeUri contractAddress BigInteger.Zero dividendEvents
             payments |> List.iter (fun p -> sprintf "%A" p |> Console.debug |> ignore)
         | _ ->
+            Console.error usage
+            Console.error "\nErrors:"
             errors |> List.iter Console.error
     | [] -> useContractAtRandom()
-    | _ -> Console.error "Invalid arguments"
-
+    | _ -> 
+        Console.error usage
+            
     0

@@ -28,17 +28,21 @@ let minStakingPeriod = 90UL * TestBase.days |> BigInteger
 
 let update msg model = 
     let unstake account = 
-        let originalReleaseDate = model.ReleaseDates.[account]
-        let releaseDateDifference = BigInteger.Max(originalReleaseDate - model.TimeStamp, 0)
-        let newReleaseDates = model.ReleaseDates.Remove(account)
-        let stakeSharesToRemove = model.StakedFunds.[account] * releaseDateDifference
-        let newStakedFunds = model.StakedFunds.Remove(account)
-        let newTotalStakeShare = model.TotalStakeShare - stakeSharesToRemove
-        let newStakeShares = model.StakeShares.Change(account, fun old -> old |> Option.map ((-) stakeSharesToRemove))
-        { model with StakedFunds = newStakedFunds
-                     TotalStakeShare = newTotalStakeShare
-                     StakeShares = newStakeShares
-                     ReleaseDates = newReleaseDates }
+        let originalReleaseDate = model.ReleaseDates |> Map.tryFind account
+        match originalReleaseDate with
+        | None -> model
+        | Some originalReleaseDate ->
+            let releaseDateDifference = BigInteger.Max(originalReleaseDate - model.TimeStamp, 0)
+            let newReleaseDates = model.ReleaseDates.Remove(account)
+            let stakeSharesToRemove = model.StakedFunds.[account] * releaseDateDifference
+            let newStakedFunds = model.StakedFunds.Remove(account)
+            let newTotalStakeShare = model.TotalStakeShare - stakeSharesToRemove
+            let newStakeShares = model.StakeShares.Change(account, fun old -> old |> Option.map ((-) stakeSharesToRemove))
+            { model with 
+                StakedFunds = newStakedFunds
+                TotalStakeShare = newTotalStakeShare
+                StakeShares = newStakeShares
+                ReleaseDates = newReleaseDates }
 
     match msg with
     | AdvanceTimeTo newTime ->

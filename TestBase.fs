@@ -41,10 +41,32 @@ let runNow (task:Task<'T>) =
     |> Async.AwaitTask
     |> Async.RunSynchronously
 
-type Abi(filename) =
-    member val JsonString = File.OpenText(filename).ReadToEnd()
-    member this.AbiString = JsonConvert.DeserializeObject<JObject>(this.JsonString).GetValue("abi").ToString()
-    member this.Bytecode = JsonConvert.DeserializeObject<JObject>(this.JsonString).GetValue("bytecode").ToString()
+// type Abi(filename) =
+//     member val JsonString = File.OpenText(filename).ReadToEnd()
+//     member this.AbiString = JsonConvert.DeserializeObject<JObject>(this.JsonString).GetValue("abi").ToString()
+//     member this.Bytecode = JsonConvert.DeserializeObject<JObject>(this.JsonString).GetValue("bytecode").ToString()
+
+type Abi = 
+    {
+        JsonString: string
+        AbiString: string
+        Bytecode: string
+    }
+
+let abiFrom compiledJsonFile = 
+    let jsonString = File.OpenText(compiledJsonFile).ReadToEnd()
+    {
+        JsonString = jsonString
+        AbiString = JsonConvert.DeserializeObject<JObject>(jsonString).GetValue("abi").ToString()
+        Bytecode = JsonConvert.DeserializeObject<JObject>(jsonString).GetValue("bytecode").ToString()
+    }
+
+let abiFromAbiJson abiString = 
+    {
+        JsonString = ""
+        AbiString = abiString
+        Bytecode = ""
+    }
 
 type IAsyncTxSender =
     abstract member SendTxAsync : string -> BigInteger -> string -> Task<TransactionReceipt>
@@ -101,6 +123,11 @@ type EthereumConnection(nodeURI: string, privKey: string) =
     member this.SendEther address amount =
         this.SendEtherAsync address amount |> runNow
 
+    member this.getLatestBlockTimestamp () =
+        let block = 
+            this.Web3.Eth.Blocks.GetBlockWithTransactionsByNumber.SendRequestAsync(BlockParameter.CreateLatest()) 
+            |> runNow
+        block.Timestamp.Value
 
 type Profile = { FunctionName: string; Duration: string }
 
@@ -113,6 +140,7 @@ let profileMe f =
 
 
 type ContractPlug(ethConn: EthereumConnection, abi: Abi, address) =
+
     member val public Address = address
 
     member val public Contract = 
