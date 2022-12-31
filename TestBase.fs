@@ -148,6 +148,16 @@ type ContractPlug(ethConn: EthereumConnection, abi: Abi, address) =
     member this.ExecuteFunction functionName arguments = 
         this.ExecuteFunctionAsync functionName arguments |> runNow
 
+    member this.getEvents<'T when 'T: (new: unit -> 'T)> 
+            eventName 
+            fromBlockParam 
+            toBlockParam =
+        let stakedEventLog = this.Contract.GetEvent(eventName)
+        let filterInput = stakedEventLog.CreateFilterInput(fromBlockParam, toBlockParam)
+        stakedEventLog.GetAllChangesAsync<'T>(filterInput) 
+        |> runNow
+        |> Seq.map (fun log -> log.Event)
+
 
 [<System.AttributeUsage(AttributeTargets.Method, AllowMultiple = true)>]
 type SpecificationAttribute(contractName, functionName, specCode) =
@@ -200,15 +210,3 @@ let sendTxAs =
     sendTx localURI 4000000UL 1000000000UL
 
 
-let getEvents<'T when 'T: (new: unit -> 'T)> 
-        eventName 
-        abi 
-        contractAddress 
-        fromBlockParam 
-        toBlockParam =
-    let contract = ethConn.Web3.Eth.GetContract(abi, contractAddress)
-    let stakedEventLog = contract.GetEvent(eventName)
-    let filterInput = stakedEventLog.CreateFilterInput(fromBlockParam, toBlockParam)
-    stakedEventLog.GetAllChangesAsync<'T>(filterInput) 
-    |> runNow
-    |> Seq.map (fun log -> log.Event)

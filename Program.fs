@@ -11,10 +11,7 @@ open System
 open Nethereum.Web3.Accounts
 open Nethereum.RPC.Eth.DTOs
 open Query
-open System.CommandLine
 open System.Threading.Tasks
-open Argu
-open Arguments
 
 type Actions =
     | Stake of BigInteger
@@ -180,10 +177,10 @@ let useContractAtRandom () =
 
     timer.Dispose() 
 
-    getEvents<StakedEventDTO> 
+    let plug = ContractPlug(ethConn, Abi(ABI), simpleStakingService.ContractHandler.ContractAddress)
+
+    plug.getEvents<StakedEventDTO> 
         "Staked"
-        ABI
-        simpleStakingService.ContractHandler.ContractAddress
         (BlockParameter(0UL))
         (BlockParameter.CreateLatest()) 
     |> Seq.toList
@@ -191,10 +188,8 @@ let useContractAtRandom () =
     |> Console.debug
     |> ignore
 
-    getEvents<UnstakedEventDTO>
+    plug.getEvents<UnstakedEventDTO>
         "Unstaked"
-        ABI
-        simpleStakingService.ContractHandler.ContractAddress
         (BlockParameter(0UL))
         (BlockParameter.CreateLatest())
     |> Seq.toList
@@ -238,22 +233,21 @@ let queryFromEvents
 
 
 let fetchEventsAndSimulateDividends
+        nodeUri
         stakingContractAddress 
         contractLaunchTimestamp
         dividendEvents =
+    let conn = EthereumConnection(nodeUri, makeAccount().PrivateKey) 
+    let plug = ContractPlug(conn, Abi(ABI), stakingContractAddress)
     let stakingEvents = 
-        getEvents<StakedEventDTO> 
+        plug.getEvents<StakedEventDTO> 
             "Staked"
-            ABI
-            stakingContractAddress
             (BlockParameter(0UL))
             (BlockParameter.CreateLatest()) 
         |> Seq.toList
     let unstakingEvents =
-        getEvents<UnstakedEventDTO>
+        plug.getEvents<UnstakedEventDTO>
             "Unstaked"
-            ABI
-            stakingContractAddress
             (BlockParameter(0UL))
             (BlockParameter.CreateLatest())
         |> Seq.toList
@@ -265,15 +259,14 @@ let fetchEventsAndSimulateDividends
 
 [<EntryPoint>]
 let main argv =
-    match argv with
-    | [|nodeUri; contractAddress; strDividends|] -> 
+    match argv |> Array.toList with
+    | nodeUri :: contractAddress :: strDividends when (List.length strDividends) % 2 = 0 -> 
         let dividendEvents = 
-            strDividends.Split(",") 
-            |> Array.toList
+            strDividends
+            |> List.chunkBySize 2
             |> List.mapi (fun indx strDividend -> 
-                let strDivList = strDividend.Split(" ")
-                match strDivList with
-                | [|strTimestamp; strAmount|] -> 
+                match strDividend with
+                | [strTimestamp; strAmount] -> 
                     try 
                         { Timestamp = UInt64.Parse strTimestamp |> BigInteger
                           Amount = Decimal.Multiply(Decimal.Parse strAmount, 1_000_000_000_000_000_000M) |> BigInteger }
@@ -287,10 +280,11 @@ let main argv =
         | [] ->
             let dividendEvents = dividendEvents |> List.choose (function | Ok x -> Some x | _ -> None)
             let (model, payments) =
-                fetchEventsAndSimulateDividends contractAddress BigInteger.Zero dividendEvents
+                fetchEventsAndSimulateDividends nodeUri contractAddress BigInteger.Zero dividendEvents
             payments |> List.iter (fun p -> sprintf "%A" p |> Console.debug |> ignore)
         | _ ->
             errors |> List.iter Console.error
-    | _ -> useContractAtRandom()
+    | [] -> useContractAtRandom()
+    | _ -> Console.error "Invalid arguments"
 
     0
