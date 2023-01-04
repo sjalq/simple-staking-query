@@ -106,6 +106,7 @@ type EthereumConnection(nodeURI: string, privKey: string) =
         this.Web3.Client.SendRequestAsync(method = "evm_increaseTime", paramList = [| seconds |]) 
         |> Async.AwaitTask 
         |> Async.RunSynchronously
+        
         this.Web3.Client.SendRequestAsync(method = "evm_mine", paramList = [||]) 
         |> Async.AwaitTask 
         |> Async.RunSynchronously

@@ -12,6 +12,13 @@ open Nethereum.Web3.Accounts
 open Nethereum.RPC.Eth.DTOs
 open Query
 open System.Threading.Tasks
+open System.Reactive.Linq
+open Nethereum.JsonRpc.WebSocketStreamingClient;
+open Nethereum.RPC.Reactive.Eth.Subscriptions;
+open System.Runtime.InteropServices
+
+// [<DllImport("libc")>]
+// let system (exec:string) = 0
 
 type Actions =
     | Stake of BigInteger
@@ -47,10 +54,14 @@ let takeRandomActionAsRandomAccount varaTokenAddress simpleStakingAddress accoun
             varaTokenService.ApproveRequestAndWaitForReceiptAsync(
                 ApproveFunction(Spender = simpleStakingService.ContractHandler.ContractAddress, Amount = amount)
             ) |> runNow
+
+        let varaBalance = 
+            varaTokenService.BalanceOfQueryAsync(BalanceOfFunction(Account = account.Address))
+            |> runNow
         
         try 
             simpleStakingService.StakeRequestAndWaitForReceiptAsync(
-                StakeFunction(Amount = amount)
+                StakeFunction(Amount = min amount varaBalance)
             ) |> runNow 
             |> Ok
         with
@@ -58,6 +69,7 @@ let takeRandomActionAsRandomAccount varaTokenAddress simpleStakingAddress accoun
 
     let unstake () =
         try 
+            "Attemping to unstake" |> Console.info
             simpleStakingService.UnstakeRequestAndWaitForReceiptAsync(
                 UnstakeFunction()
             ) |> runNow
@@ -65,25 +77,27 @@ let takeRandomActionAsRandomAccount varaTokenAddress simpleStakingAddress accoun
         with
         | ex -> Error ex
 
-    // wait some seconds between actions (allows "days" of blocktime to pass)
-    System.Threading.Thread.Sleep(rnd.Next(1,120))
     let action = pickRandomAction()
     let result = 
         match action with
         | Stake amount -> stake amount
         | Unstake -> unstake ()
+
+    // result |> ignore
     
     match result with
     | Ok txr -> 
         sprintf "Account: %s Action: %s Tx: %s" account.Address (action.ToString()) txr.TransactionHash
-        //|> Console.info
+        |> Console.info
         |> ignore
     | Error ex ->
         sprintf "Account: %s Action: %s Error: %s" account.Address (action.ToString()) ex.Message
         |> Console.info
         |> ignore
 
+
 let ABI = """[{"inputs":[{"internalType":"contract IERC20","name":"_vara","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"_staker","type":"address"},{"indexed":false,"internalType":"uint256","name":"_amount","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"_duration","type":"uint256"},{"indexed":true,"internalType":"uint256","name":"_releaseDate","type":"uint256"}],"name":"Staked","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"_staker","type":"address"},{"indexed":false,"internalType":"uint256","name":"_amount","type":"uint256"},{"indexed":true,"internalType":"uint256","name":"_originalReleaseDate","type":"uint256"},{"indexed":true,"internalType":"uint256","name":"_releaseDate","type":"uint256"}],"name":"Unstaked","type":"event"},{"inputs":[{"internalType":"uint256","name":"_amount","type":"uint256"}],"name":"Stake","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"Unstake","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"}],"name":"releaseDates","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"}],"name":"stakedFunds","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"vara","outputs":[{"internalType":"contract IERC20","name":"","type":"address"}],"stateMutability":"view","type":"function"}]"""
+
 
 let initRandomAccounts x = 
     sprintf "Spinning up %d random accounts" x |> Console.info
@@ -137,13 +151,6 @@ let giftVaraToAccounts (accounts: Account array) (varaTokenService:VaraTokenServ
         varaTxr)
 
 
-let advanceTime interval fn =
-    ethConn.TimeTravel (1UL * days)
-    let timer = new Timer(TimerCallback fn)
-    timer.Change(0, interval) |> ignore
-    timer
-
-
 let mutable escapeKeyPressed = false
 let monitorEscapeKey () =
     Console.info "Press ESC to stop"
@@ -152,13 +159,25 @@ let monitorEscapeKey () =
             escapeKeyPressed <- Console.ReadKey(false).Key = ConsoleKey.Escape)
         .Start()
 
+
+let simulatedDay = 100 // one day will pass every 100ms
+
+
 let runFunctionInThread fn =
     let t = Thread(fun () -> 
         while not escapeKeyPressed do 
-            Thread.Sleep(rnd.Next(0, 120000)) 
+            Thread.Sleep(rnd.Next(0, 30 * simulatedDay)) 
             fn()
     )
+    t.Start()
     t
+
+
+let advanceTime interval fn =
+    let timer = new Timer(TimerCallback fn)
+    timer.Change(0, interval) |> ignore
+    timer
+
 
 let useContractAtRandom () = 
     let randomAccounts = initRandomAccounts 10
@@ -170,13 +189,15 @@ let useContractAtRandom () =
     sprintf "Staking Address : %A" simpleStakingService.ContractHandler.ContractAddress |> Console.complete
 
     // travel forward in time 1 day every second, which allows unstaking to actually happen
-    let timer = advanceTime 1000 (fun _ -> 
+    let timer = advanceTime simulatedDay (fun _ -> 
+                                    ethConn.TimeTravel (1UL * days)
                                     // get the vara balance of the staking contract and display it
                                     let stakingContractBalance = 
                                         varaTokenService.BalanceOfQueryAsync(BalanceOfFunction(Account = simpleStakingService.ContractHandler.ContractAddress)) 
                                         |> runNow
                                     let time = ethConn.getLatestBlockTimestamp()
                                     sprintf "Time: %A - \t Staking contract balance: %A" time ((stakingContractBalance / (BigInteger 1_000_000_000_000_000UL))) |> Console.ok
+                                    sprintf "%A" simpleStakingService.ContractHandler.ContractAddress |> Console.complete
                                 )
 
     monitorEscapeKey()
@@ -188,9 +209,7 @@ let useContractAtRandom () =
                 |> takeRandomActionAsRandomAccount  
                     varaTokenService.ContractHandler.ContractAddress 
                     simpleStakingService.ContractHandler.ContractAddress))
-    
-    threads |> Array.iter (fun t -> t.Start())
-    
+        
     while threads |> Array.exists(fun t -> t.IsAlive) do
         // wait for all the threads to conclude
         Thread.Sleep(1000)
@@ -215,29 +234,58 @@ let useContractAtRandom () =
     |> ignore
 
 
+let getTimestamp msg = 
+    match msg with
+    | Query.Msg.Call (timestamp, _, Query.StakingMsg.Stake _) -> (BigInteger.One + timestamp)
+    | Query.Msg.Call (timestamp, _, _) -> timestamp
+    | Query.Msg.AdvanceTimeTo timestamp -> timestamp
+
 let queryFromEvents 
         timestamp 
         (stakingEvents:StakedEventDTO list) 
         (unstakingEvents:UnstakedEventDTO list) 
         dividendEvents =
     let initModel = Query.initModel timestamp
-    let stakingMsg = 
+    let stakingMsgs = 
         stakingEvents
-        |> List.map (fun se -> (se.ReleaseDate - se.Duration), Query.Msg.Stake (se.Staker, se.Amount))
-        |> List.sortBy fst
-    let unstakingMsg = 
+        |> List.map (fun se -> 
+            Query.Msg.Call ((se.ReleaseDate - se.Duration), se.Staker, Query.StakingMsg.Stake se.Amount))
+        |> List.sortBy getTimestamp
+    let unstakingMsgs = 
         unstakingEvents
-        |> List.map (fun ue -> ue.ReleaseDate, Query.Msg.Unstake ue.Staker)
-        |> List.sortBy fst
-    let dividendMsg =
+        |> List.map (fun ue ->
+            Query.Msg.Call (ue.ReleaseDate, ue.Staker, Query.StakingMsg.Unstake) )
+        |> List.sortBy getTimestamp
+    let dividendMsgs =
         dividendEvents
-        |> List.map (fun de -> de.Timestamp, Query.Msg.MerkleDropReward de.Amount)
-        |> List.sortBy fst
+        |> List.map (fun de -> 
+            Query.Msg.Call (de.Timestamp, "0xSantaClaus", Query.StakingMsg.MerkleDropReward de.Amount))
+        |> List.sortBy getTimestamp
+    let jointEvents = 
+        stakingMsgs @ unstakingMsgs @ dividendMsgs 
+        |> List.sortBy getTimestamp 
+        //|> Console.debug
     let allMsg = 
-        stakingMsg @ unstakingMsg @ dividendMsg 
-        |> List.sortBy fst 
-        |> Console.debug
-        |> List.map snd
+        jointEvents 
+
+    "Here" |> Console.debug |> ignore
+    jointEvents |> List.map Console.debug |> ignore
+    // jointEvents 
+    // |> List.filter (fun (t, m) -> match m with | Query.Msg.Stake _ -> true | _ -> false) 
+    // |> List.length 
+    // |> Console.debug
+    // |> ignore
+    // jointEvents 
+    // |> List.filter (fun (t, m) -> match m with | Query.Msg.Unstake _ -> true | _ -> false) 
+    // |> List.length 
+    // |> Console.debug
+    // |> ignore
+    // jointEvents 
+    // |> List.filter (fun (t, m) -> match m with | Query.Msg.MerkleDropReward _ -> true | _ -> false)
+    // |> List.length 
+    // |> Console.debug
+    // |> ignore
+
     allMsg
     |> List.fold 
         (fun ((model,cmd), payments) msg -> 
@@ -282,6 +330,8 @@ let usage =
 
 [<EntryPoint>]
 let main argv =
+    //system("resize -s 150 180 > /dev/null") |> ignore
+
     match argv |> Array.toList with
     | nodeUri :: contractAddress :: strDividends when (List.length strDividends) % 2 = 0 && (List.length strDividends) <> 0 -> 
         let dividendEvents = 
@@ -304,11 +354,13 @@ let main argv =
             let dividendEvents = dividendEvents |> List.choose (function | Ok x -> Some x | _ -> None)
             let (model, payments) =
                 fetchEventsAndSimulateDividends nodeUri contractAddress BigInteger.Zero dividendEvents
+            model |> sprintf "%A" |> Console.ok |> ignore
             payments |> List.iter (fun p -> sprintf "%A" p |> Console.debug |> ignore)
         | _ ->
             Console.error usage
             Console.error "\nErrors:"
             errors |> List.iter Console.error
+
     | [] -> useContractAtRandom()
     | _ -> 
         Console.error usage
