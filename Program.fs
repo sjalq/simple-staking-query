@@ -239,6 +239,7 @@ let getTimestamp msg =
     | Query.Msg.Call (timestamp, _, Query.StakingMsg.Stake _) -> (BigInteger.One + timestamp)
     | Query.Msg.Call (timestamp, _, _) -> timestamp
     | Query.Msg.AdvanceTimeTo timestamp -> timestamp
+    
 
 let queryFromEvents 
         timestamp 
@@ -264,27 +265,8 @@ let queryFromEvents
     let jointEvents = 
         stakingMsgs @ unstakingMsgs @ dividendMsgs 
         |> List.sortBy getTimestamp 
-        //|> Console.debug
     let allMsg = 
         jointEvents 
-
-    "Here" |> Console.debug |> ignore
-    jointEvents |> List.map Console.debug |> ignore
-    // jointEvents 
-    // |> List.filter (fun (t, m) -> match m with | Query.Msg.Stake _ -> true | _ -> false) 
-    // |> List.length 
-    // |> Console.debug
-    // |> ignore
-    // jointEvents 
-    // |> List.filter (fun (t, m) -> match m with | Query.Msg.Unstake _ -> true | _ -> false) 
-    // |> List.length 
-    // |> Console.debug
-    // |> ignore
-    // jointEvents 
-    // |> List.filter (fun (t, m) -> match m with | Query.Msg.MerkleDropReward _ -> true | _ -> false)
-    // |> List.length 
-    // |> Console.debug
-    // |> ignore
 
     allMsg
     |> List.fold 
@@ -352,10 +334,10 @@ let main argv =
         match errors with
         | [] ->
             let dividendEvents = dividendEvents |> List.choose (function | Ok x -> Some x | _ -> None)
-            let (model, payments) =
+            let (model, payouts) =
                 fetchEventsAndSimulateDividends nodeUri contractAddress BigInteger.Zero dividendEvents
             model |> sprintf "%A" |> Console.ok |> ignore
-            payments |> List.iter (fun p -> sprintf "%A" p |> Console.debug |> ignore)
+            payouts |> List.iter (fun p -> sprintf "%A" p |> Console.debug |> ignore)
         | _ ->
             Console.error usage
             Console.error "\nErrors:"
