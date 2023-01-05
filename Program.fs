@@ -16,6 +16,7 @@ open System.Reactive.Linq
 open Nethereum.JsonRpc.WebSocketStreamingClient;
 open Nethereum.RPC.Reactive.Eth.Subscriptions;
 open System.Runtime.InteropServices
+open CsvFormat
 
 // [<DllImport("libc")>]
 // let system (exec:string) = 0
@@ -270,14 +271,8 @@ let queryFromEvents
 
     allMsg
     |> List.fold 
-        (fun ((model,cmd), payments) msg -> 
-            match cmd with
-            | Query.Cmd.Payouts p -> 
-                Query.update msg model, payments @ [p]
-            | _ -> 
-                Query.update msg model, payments)
-        ((initModel, Query.Cmd.Nope), List.empty)
-
+        (fun (model,cmd) msg -> Query.update msg model)
+        (initModel, Query.Cmd.Nope)
 
 let fetchEventsAndSimulateDividends
         nodeUri
@@ -336,8 +331,11 @@ let main argv =
             let dividendEvents = dividendEvents |> List.choose (function | Ok x -> Some x | _ -> None)
             let (model, payouts) =
                 fetchEventsAndSimulateDividends nodeUri contractAddress BigInteger.Zero dividendEvents
-            model |> sprintf "%A" |> Console.ok |> ignore
-            payouts |> List.iter (fun p -> sprintf "%A" p |> Console.debug |> ignore)
+
+            payouts |> sprintf "%A" |> Console.ok |> ignore
+            match payouts with
+            | Query.Cmd.Payouts payouts -> payouts |> toFile
+            | _ -> ()
         | _ ->
             Console.error usage
             Console.error "\nErrors:"

@@ -5,6 +5,7 @@
     <RootNamespace>simple_staking_query</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="CsvFormat.fs" />
     <Compile Include="JsonUtility.fs" />
     <Compile Include="Console.fs" />
     <Compile Include="TestBase.fs" />

@@ -2,3 +2,4 @@ bin/
 obj/
 .fake
 node_modules
+results*.csv
