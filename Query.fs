@@ -134,16 +134,17 @@ let rec update msg model =
     
     match msg with
     | AdvanceTimeTo newTime ->
+        sprintf "Advancing Time To: %A" newTime |> Console.info
         { model with TimeStamp = newTime }, Cmd.Nope
 
     | Call (timestamp, account, stakingMsg) ->
         
         let model = updatetime timestamp    
 
-        sprintf "\nBefore" |> Console.info
-        model |> Console.dbg |> ignore
+        //sprintf "\nBefore" |> Console.info
+        //model |> Console.dbg |> ignore
         sprintf "Message: %A" msg |> Console.info
-        sprintf "After" |> Console.info
+        //sprintf "After" |> Console.info
 
         match stakingMsg with
         | Stake amount ->
@@ -154,7 +155,7 @@ let rec update msg model =
     
         | MerkleDropReward amount ->
             merkleDropReward account amount model
-        |> Console.dbg 
+        // |> Console.dbg 
 
 
 let initModel timestamp = 
@@ -163,16 +164,3 @@ let initModel timestamp =
       ReleaseDates = Map.empty
       StakeShares = Map.empty
       TotalStakeShare = BigInteger.Zero }
-
-
-let simulateModel model msgList = 
-    msgList 
-    |> List.fold 
-        (fun (model, cmd) msg -> 
-            sprintf "simmi %A" cmd |> Console.error
-            let (model, cmd) = update msg model
-            match cmd with
-            | Payouts payouts -> payouts |> Map.iter (fun account amount -> Console.ok (sprintf "%s: %A" account amount))
-            | Nope -> ()
-            model, cmd) 
-        (model, Cmd.Nope)
