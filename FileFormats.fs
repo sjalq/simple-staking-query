@@ -32,16 +32,7 @@ type IConfig = {
   airdrop: Record<string, number>;
 };
 
-json = << add your config here >>
-
-// Config from generator - Original format
-// const config: IConfig = {
-//   decimals: 18,
-//   'airdrop': {
-//     '0x016C8780e5ccB32E5CAA342a926794cE64d9C364': 10,
-//     '0x185a4dc360ce69bdccee33b3784b0282f7961aea': 100,
-//   },
-// };
+const json = << add your config here >>
 
 function convertJsonToIConfig(json: any): IConfig {
   return {
