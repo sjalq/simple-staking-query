@@ -16,7 +16,7 @@ open System.Reactive.Linq
 open Nethereum.JsonRpc.WebSocketStreamingClient;
 open Nethereum.RPC.Reactive.Eth.Subscriptions;
 open System.Runtime.InteropServices
-open CsvFormat
+open FileFormats
 
 // [<DllImport("libc")>]
 // let system (exec:string) = 0
