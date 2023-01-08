@@ -21,11 +21,11 @@ type EthAddress(rawString: string) =
 
 type AccountWrapper = 
     | Impersonated of string
-    | NotImpersonated of Account
+    | Actual of Account
     member this.Address = 
         match this with
         | Impersonated address -> address
-        | NotImpersonated account -> account.Address
+        | Actual account -> account.Address
 
 let minutes = 60UL
 let hours = 60UL * minutes
@@ -77,14 +77,35 @@ let abiFromAbiJson abiString =
         Bytecode = ""
     }
 
+let impersonateAddress (web3:Web3) (address:string) = 
+    try 
+        web3.Client.SendRequestAsync(new RpcRequest(0, "hardhat_impersonateAccount", address)) 
+        |> Async.AwaitTask 
+        |> Async.RunSynchronously
+    with
+    | _ -> 
+        try 
+            web3.Client.SendRequestAsync(new RpcRequest(0, "anvil_impersonateAccount", address)) 
+            |> Async.AwaitTask 
+            |> Async.RunSynchronously
+        with
+        | ex -> ex |> raise
+
 type IAsyncTxSender =
     abstract member SendTxAsync : string -> BigInteger -> string -> Task<TransactionReceipt>
 
-type EthereumConnection(nodeURI: string, privKey: string) =
+type EthereumConnection(nodeURI: string, accountWrapper: AccountWrapper) =
     member val public Gas = hexBigInt 4000000UL
     member val public GasPrice = hexBigInt 1000000000UL
-    member val public Account = Accounts.Account(privKey)
-    member val public Web3 = Web3(Accounts.Account(privKey), nodeURI)
+    member val public AccountWrapper = accountWrapper// Accounts.Account(privKey)
+    member val public Web3 =
+        match accountWrapper with
+        | Impersonated address -> 
+            let web3 = Web3(nodeURI)
+            impersonateAddress web3 address
+            web3
+        | Actual account -> Web3(account, nodeURI)
+        
 
     interface IAsyncTxSender with
         member this.SendTxAsync toAddress value data = 
@@ -92,7 +113,7 @@ type EthereumConnection(nodeURI: string, privKey: string) =
                 TransactionInput(
                     data, 
                     toAddress, 
-                    this.Account.Address, 
+                    this.AccountWrapper.Address, 
                     this.Gas, 
                     this.GasPrice, 
                     HexBigInteger(value))
@@ -105,7 +126,7 @@ type EthereumConnection(nodeURI: string, privKey: string) =
         this.Web3.Eth.DeployContract.SendRequestAndWaitForReceiptAsync(
             abi.AbiString, 
             abi.Bytecode, 
-            this.Account.Address, 
+            this.AccountWrapper.Address, 
             this.Gas, this.GasPrice, 
             hexBigInt 0UL, 
             null, 
@@ -127,7 +148,7 @@ type EthereumConnection(nodeURI: string, privKey: string) =
     member this.SendEtherAsync address (amount:BigInteger) =
         let transactionInput =
             TransactionInput
-                ("", address, this.Account.Address, hexBigInt 4000000UL, hexBigInt 1000000000UL, HexBigInteger(amount))
+                ("", address, this.AccountWrapper.Address, hexBigInt 4000000UL, hexBigInt 1000000000UL, HexBigInteger(amount))
         this.Web3.Eth.TransactionManager.SendTransactionAndWaitForReceiptAsync(transactionInput)
 
     member this.SendEther address amount =
@@ -217,7 +238,9 @@ let isRinkeby rinkeby notRinkeby =
     | false -> notRinkeby
 
 let ethConn =
-    isRinkeby (EthereumConnection(rinkebyURI, rinkebyPrivKey)) (EthereumConnection(localURI, ganachePrivKey))
+    isRinkeby 
+        (EthereumConnection(rinkebyURI, Account(rinkebyPrivKey) |> Actual)) 
+        (EthereumConnection(localURI, Account(ganachePrivKey) |> Actual))
 
 let decodeEvents<'a when 'a: (new: unit -> 'a)> (receipt: TransactionReceipt) =
     receipt.DecodeAllEvents<'a>() |> Seq.map (fun e -> e.Event)
@@ -248,16 +271,3 @@ let sendTxAs =
     sendTx localURI 4000000UL 1000000000UL
 
 
-let impersonateAddress (web3:Web3) (address:string) = 
-    try 
-        web3.Client.SendRequestAsync(new RpcRequest(0, "hardhat_impersonateAccount", address)) 
-        |> Async.AwaitTask 
-        |> Async.RunSynchronously
-    with
-    | _ -> 
-        try 
-            web3.Client.SendRequestAsync(new RpcRequest(0, "anvil_impersonateAccount", address)) 
-            |> Async.AwaitTask 
-            |> Async.RunSynchronously
-        with
-        | ex -> ex |> raise

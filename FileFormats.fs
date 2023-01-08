@@ -5,7 +5,7 @@ open System.Numerics
 open System.IO
 
 let toFile map =
-    let timestamp = DateTime.Now.ToString("yyyy-MM-dd-hh-mm-ss")
+    let timestamp = DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss")
     let filePath = sprintf "output/results %s.csv" timestamp
 
     File.WriteAllLines(

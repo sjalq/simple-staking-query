@@ -26,6 +26,10 @@ type DividendEvent =
     }
 
 
+let varaABI = """[{"inputs":[],"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"owner","type":"address"},{"indexed":true,"internalType":"address","name":"spender","type":"address"},{"indexed":false,"internalType":"uint256","name":"value","type":"uint256"}],"name":"Approval","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"from","type":"address"},{"indexed":true,"internalType":"address","name":"to","type":"address"},{"indexed":false,"internalType":"uint256","name":"value","type":"uint256"}],"name":"Transfer","type":"event"},{"inputs":[{"internalType":"address","name":"owner","type":"address"},{"internalType":"address","name":"spender","type":"address"}],"name":"allowance","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"spender","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"approve","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"account","type":"address"}],"name":"balanceOf","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"decimals","outputs":[{"internalType":"uint8","name":"","type":"uint8"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"spender","type":"address"},{"internalType":"uint256","name":"subtractedValue","type":"uint256"}],"name":"decreaseAllowance","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"spender","type":"address"},{"internalType":"uint256","name":"addedValue","type":"uint256"}],"name":"increaseAllowance","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"name","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"symbol","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"totalSupply","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"transfer","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"from","type":"address"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"transferFrom","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}]"""
+let stakingABI = """[{"inputs":[{"internalType":"contract IERC20","name":"_vara","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"_staker","type":"address"},{"indexed":false,"internalType":"uint256","name":"_amount","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"_duration","type":"uint256"},{"indexed":true,"internalType":"uint256","name":"_releaseDate","type":"uint256"}],"name":"Staked","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"_staker","type":"address"},{"indexed":false,"internalType":"uint256","name":"_amount","type":"uint256"},{"indexed":true,"internalType":"uint256","name":"_originalReleaseDate","type":"uint256"},{"indexed":true,"internalType":"uint256","name":"_releaseDate","type":"uint256"}],"name":"Unstaked","type":"event"},{"inputs":[{"internalType":"uint256","name":"_amount","type":"uint256"}],"name":"Stake","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"Unstake","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"}],"name":"releaseDates","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"}],"name":"stakedFunds","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"vara","outputs":[{"internalType":"contract IERC20","name":"","type":"address"}],"stateMutability":"view","type":"function"}]"""
+
+
 let pickRandomAction () = 
     let action = rnd.Next(0, 10) % 2
     match action with
@@ -40,50 +44,27 @@ let pickRandomAction () =
 
 
 let takeRandomActionAsRandomAccount varaTokenAddress simpleStakingAddress account =
-    let web3 = 
-        match account with
-        | Impersonated address -> 
-            let acc = Account()
-            sprintf "Impersonating account %A" address |> Console.error 
-            let web3 = Web3(localURI)
-            impersonateAddress web3 address
-            web3.Personal.
-            web3 
-        | NotImpersonated account ->
-            Web3(account, localURI)
-    let varaTokenService = VaraTokenService(web3, varaTokenAddress)
-    let simpleStakingService = SimpleStakingService(web3, simpleStakingAddress)
+    let ethc = EthereumConnection(localURI, account)
+    let varaTokenPlug = ContractPlug(ethc, abiFromAbiJson(varaABI), varaTokenAddress)
+    let simpleStakingPlug = ContractPlug(ethc, abiFromAbiJson(stakingABI), simpleStakingAddress)
 
     let stake amount = 
-        let approveTxr = 
-            varaTokenService.ApproveRequestAndWaitForReceiptAsync(
-                ApproveFunction(Spender = simpleStakingService.ContractHandler.ContractAddress, Amount = amount)
-            ) |> runNow
-
-        let varaBalance = 
-            varaTokenService.BalanceOfQueryAsync(BalanceOfFunction(Account = account.Address))
-            |> runNow
-        
+        let approveTxr = varaTokenPlug.ExecuteFunction "approve" [|simpleStakingAddress; amount |]
+        let varaBalance = varaTokenPlug.Query<BigInteger> "balanceOf" [|account.Address|] 
         try 
-            simpleStakingService.StakeRequestAndWaitForReceiptAsync(
-                StakeFunction(Amount = min amount varaBalance)
-            ) |> runNow 
-            |> Ok
+            simpleStakingPlug.ExecuteFunction "Stake" [| amount |] |> Ok
         with
         | ex -> Error ex
 
     let unstake () =
         try 
             "Attemping to unstake" |> Console.info
-            simpleStakingService.UnstakeRequestAndWaitForReceiptAsync(
-                UnstakeFunction()
-            ) |> runNow
-            |> Ok
+            simpleStakingPlug.ExecuteFunction "Unstake" [||] |> Ok
         with
         | ex -> Error ex
 
     let action = pickRandomAction()
-    let result = 
+    let result =    
         match action with
         | Stake amount -> stake amount
         | Unstake -> unstake ()
@@ -97,9 +78,6 @@ let takeRandomActionAsRandomAccount varaTokenAddress simpleStakingAddress accoun
         sprintf "Account: %s Action: %s Error: %s" account.Address (action.ToString()) ex.Message
         |> Console.info
         |> ignore
-
-
-let ABI = """[{"inputs":[{"internalType":"contract IERC20","name":"_vara","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"_staker","type":"address"},{"indexed":false,"internalType":"uint256","name":"_amount","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"_duration","type":"uint256"},{"indexed":true,"internalType":"uint256","name":"_releaseDate","type":"uint256"}],"name":"Staked","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"_staker","type":"address"},{"indexed":false,"internalType":"uint256","name":"_amount","type":"uint256"},{"indexed":true,"internalType":"uint256","name":"_originalReleaseDate","type":"uint256"},{"indexed":true,"internalType":"uint256","name":"_releaseDate","type":"uint256"}],"name":"Unstaked","type":"event"},{"inputs":[{"internalType":"uint256","name":"_amount","type":"uint256"}],"name":"Stake","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"Unstake","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"}],"name":"releaseDates","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"}],"name":"stakedFunds","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"vara","outputs":[{"internalType":"contract IERC20","name":"","type":"address"}],"stateMutability":"view","type":"function"}]"""
 
 
 let initRandomAccounts x = 
@@ -185,8 +163,8 @@ let advanceTime interval fn =
 
 let useContractAtRandom (addressToImpersonate:string) = 
     let randomAccounts = 
-        initRandomAccounts 1 
-        |> Array.map (fun acc -> NotImpersonated acc) 
+        initRandomAccounts 10 
+        |> Array.map (fun acc -> Actual acc) 
         |> Array.append [|Impersonated addressToImpersonate|]
     giftEther randomAccounts
     let (varaTokenService, simpleStakingService) = deployContracts()
@@ -224,7 +202,7 @@ let useContractAtRandom (addressToImpersonate:string) =
 
     timer.Dispose() 
 
-    let plug = ContractPlug(ethConn, abiFromAbiJson(ABI), simpleStakingService.ContractHandler.ContractAddress)
+    let plug = ContractPlug(ethConn, abiFromAbiJson(stakingABI), simpleStakingService.ContractHandler.ContractAddress)
 
     plug.getEvents<StakedEventDTO> 
         "Staked"
@@ -292,8 +270,8 @@ let fetchEventsAndSimulateDividends
         stakingContractAddress 
         contractLaunchTimestamp
         dividendEvents =
-    let conn = EthereumConnection(nodeUri, makeAccount().PrivateKey) 
-    let plug = ContractPlug(conn, abiFromAbiJson(ABI), stakingContractAddress)
+    let conn = EthereumConnection(nodeUri, Actual (makeAccount())) 
+    let plug = ContractPlug(conn, abiFromAbiJson(stakingABI), stakingContractAddress)
     let stakingEvents = 
         plug.getEvents<StakedEventDTO> 
             "Staked"
