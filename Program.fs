@@ -8,18 +8,11 @@ open System.Linq
 open System.Numerics
 open System.Threading
 open System
-open Nethereum.Web3.Accounts
 open Nethereum.RPC.Eth.DTOs
-open Query
-open System.Threading.Tasks
-open System.Reactive.Linq
-open Nethereum.JsonRpc.WebSocketStreamingClient;
-open Nethereum.RPC.Reactive.Eth.Subscriptions;
-open System.Runtime.InteropServices
 open FileFormats
+open Nethereum.RPC.TransactionManagers
+open Nethereum.Model
 
-// [<DllImport("libc")>]
-// let system (exec:string) = 0
 
 type Actions =
     | Stake of BigInteger
@@ -47,8 +40,19 @@ let pickRandomAction () =
 
 
 let takeRandomActionAsRandomAccount varaTokenAddress simpleStakingAddress account =
-    let varaTokenService = VaraTokenService(Web3(account, "http://localhost:8545"), varaTokenAddress)
-    let simpleStakingService = SimpleStakingService(Web3(account, "http://localhost:8545"), simpleStakingAddress)
+    let web3 = 
+        match account with
+        | Impersonated address -> 
+            let acc = Account()
+            sprintf "Impersonating account %A" address |> Console.error 
+            let web3 = Web3(localURI)
+            impersonateAddress web3 address
+            web3.Personal.
+            web3 
+        | NotImpersonated account ->
+            Web3(account, localURI)
+    let varaTokenService = VaraTokenService(web3, varaTokenAddress)
+    let simpleStakingService = SimpleStakingService(web3, simpleStakingAddress)
 
     let stake amount = 
         let approveTxr = 
@@ -83,8 +87,6 @@ let takeRandomActionAsRandomAccount varaTokenAddress simpleStakingAddress accoun
         match action with
         | Stake amount -> stake amount
         | Unstake -> unstake ()
-
-    // result |> ignore
     
     match result with
     | Ok txr -> 
@@ -106,16 +108,17 @@ let initRandomAccounts x =
         Enumerable.Range(1, x) 
         |> Seq.map (fun _ -> makeAccount()) 
         |> Seq.toArray
-
-    "Giving all accounts some Eth" |> Console.info
     randomAccounts
+
+
+let giftEther (accounts:AccountWrapper array) =
+    "Giving all accounts some Eth" |> Console.info
+    accounts
     |> Array.map (fun acc -> 
         let ethTxr = ethConn.SendEther acc.Address (bigInt 1_000_000_000_000_000_000UL)
         sprintf "Account: %s Eth: 1" acc.Address 
         |> Console.info)
     |> ignore
-
-    randomAccounts
 
 
 let deployContracts () = 
@@ -132,7 +135,7 @@ let deployContracts () =
     (varaTokenService, simpleStakingService)
 
 
-let giftVaraToAccounts (accounts: Account array) (varaTokenService:VaraTokenService) =
+let giftVaraToAccounts (accounts: AccountWrapper array) (varaTokenService:VaraTokenService) =
     Console.info "Initializing accounts with VARA"
     accounts
     |> Array.map (fun acc -> 
@@ -180,8 +183,12 @@ let advanceTime interval fn =
     timer
 
 
-let useContractAtRandom () = 
-    let randomAccounts = initRandomAccounts 10
+let useContractAtRandom (addressToImpersonate:string) = 
+    let randomAccounts = 
+        initRandomAccounts 1 
+        |> Array.map (fun acc -> NotImpersonated acc) 
+        |> Array.append [|Impersonated addressToImpersonate|]
+    giftEther randomAccounts
     let (varaTokenService, simpleStakingService) = deployContracts()
     giftVaraToAccounts randomAccounts varaTokenService |> ignore
 
@@ -224,6 +231,9 @@ let useContractAtRandom () =
         (BlockParameter(0UL))
         (BlockParameter.CreateLatest()) 
     |> Seq.toList
+    |> Seq.where (fun e -> (e.Staker.ToLowerInvariant()) = (addressToImpersonate.ToLowerInvariant()))
+    |> Seq.map (fun e -> {| Staker = e.Staker |})
+    |> Console.dbg
     |> ignore
 
     plug.getEvents<UnstakedEventDTO>
@@ -232,6 +242,9 @@ let useContractAtRandom () =
         (BlockParameter.CreateLatest())
     |> Seq.toList
     |> List.filter (fun e -> e.Amount > (BigInteger(0UL)))
+    |> Seq.where (fun e -> e.Staker = addressToImpersonate)
+    |> Seq.map (fun e -> {| Staker = e.Staker |})
+    |> Console.dbg
     |> ignore
 
 
@@ -301,7 +314,7 @@ let fetchEventsAndSimulateDividends
 
 let usage =
     @"Invalid arguments:
-    Use either no arguments to run a simulation against ""http://127.0.0.1:8545""
+    Use either [addressToImpersonate] to run a simulation against ""http://127.0.0.1:8545"" 
     Or provide [nodeUri] [contractAddress] [dividendTimestamp1] [dividendAmount1] [dividendTimestamp2] [dividendAmount2] ..."
 
 
@@ -341,7 +354,7 @@ let main argv =
             Console.error "\nErrors:"
             errors |> List.iter Console.error
 
-    | [] -> useContractAtRandom()
+    | [addressToImpersonate] -> addressToImpersonate.ToLowerInvariant() |> useContractAtRandom
     | _ -> 
         Console.error usage
             

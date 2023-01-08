@@ -13,10 +13,19 @@ open Nethereum.Contracts
 open Nethereum.Hex.HexConvertors.Extensions
 open System.Threading.Tasks
 open Nethereum.Web3.Accounts
+open Nethereum.JsonRpc.Client
 
 type EthAddress(rawString: string) =
     static member Zero = "0x0000000000000000000000000000000000000000"
     member _.StringValue = rawString.ToLower()
+
+type AccountWrapper = 
+    | Impersonated of string
+    | NotImpersonated of Account
+    member this.Address = 
+        match this with
+        | Impersonated address -> address
+        | NotImpersonated account -> account.Address
 
 let minutes = 60UL
 let hours = 60UL * minutes
@@ -239,3 +248,16 @@ let sendTxAs =
     sendTx localURI 4000000UL 1000000000UL
 
 
+let impersonateAddress (web3:Web3) (address:string) = 
+    try 
+        web3.Client.SendRequestAsync(new RpcRequest(0, "hardhat_impersonateAccount", address)) 
+        |> Async.AwaitTask 
+        |> Async.RunSynchronously
+    with
+    | _ -> 
+        try 
+            web3.Client.SendRequestAsync(new RpcRequest(0, "anvil_impersonateAccount", address)) 
+            |> Async.AwaitTask 
+            |> Async.RunSynchronously
+        with
+        | ex -> ex |> raise
