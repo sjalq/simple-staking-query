@@ -4,6 +4,10 @@ open System
 open System.Numerics
 open System.IO
 
+let weiToDecimal weiAmount = 
+    (weiAmount / (BigInteger 1_000_000_000_000_000UL) |> decimal) / (decimal 1_000)
+
+
 let toFile map =
     let timestamp = DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss")
     let filePath = sprintf "output/results %s.csv" timestamp
@@ -18,7 +22,7 @@ let toFile map =
     let merkleFormat =
         {| 
             decimals = 18 
-            airdrop = map
+            airdrop = map |> Map.map (fun _ v -> weiToDecimal v )
         |}
 
     // write the config.json file
@@ -46,7 +50,6 @@ const config = convertJsonToIConfig(json);
 // Export config
 export default config;
 "
-
     // write the config.ts file
     let merkleFormatTs = ts.Replace("<< add your config here >>", merkleFormatJson)
     let filePath = "output/config.ts"
